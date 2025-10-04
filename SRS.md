@@ -164,13 +164,3 @@ plumber-cli task run <task_id>
 * Plumber Server 提供基于 `token` 的认证机制。
 * 所有 CLI 和 Web 请求均需携带有效 `token`。
 * Agent 与 Server 之间通信应使用jsonrpc
-
----
-
-* ✅ 支持任务并行执行
-* ✅ 提供 REST API 供外部系统触发任务。
-
----
-
-✅ **总结：**
-Plumber 是一个面向自动化运维、部署、批处理任务的统一编排系统，具备「服务器管理」「任务编排」「命令分发」「日志收集」「CLI 快速操作」五大核心功能，适用于大规模服务器场景下的批量自动化任务执行。
