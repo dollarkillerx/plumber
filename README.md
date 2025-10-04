@@ -15,9 +15,88 @@ Plumber 通过 Web 界面和命令行工具，简化批量运维、部署、批�
 
 ## 快速开始
 
-### 启动 Server
+### 方式一：使用 Docker（推荐）
+
+1. 克隆仓库并进入目录：
 
 ```bash
+git clone <repository-url>
+cd plumber
+```
+
+2. 配置 Server：
+
+```bash
+# 复制配置文件模板
+cp configs/server.toml.example configs/server.toml
+
+# 编辑配置文件
+vim configs/server.toml
+```
+
+修改数据库配置：
+
+```toml
+[database]
+host = "your-db-host"
+port = 5432
+user = "plumber"
+password = "your-password"
+dbname = "plumber"
+```
+
+3. 构建 Docker 镜像：
+
+```bash
+make docker-build
+# 或者
+docker build -t plumber-server:latest .
+```
+
+4. 启动服务：
+
+```bash
+# 使用 docker-compose（推荐）
+docker-compose up -d
+
+# 或直接运行 Docker
+docker run -d \
+  --name plumber-server \
+  -p 52281:52281 \
+  -v $(pwd)/configs/server.toml:/app/configs/server.toml:ro \
+  plumber-server:latest
+```
+
+5. 检查服务状态：
+
+```bash
+# 查看容器状态
+docker ps
+
+# 查看日志
+docker logs -f plumber-server
+
+# 健康检查
+curl http://localhost:52281/health
+```
+
+6. 停止服务：
+
+```bash
+docker-compose down
+# 或
+docker stop plumber-server
+docker rm plumber-server
+```
+
+### 方式二：手动运行
+
+#### 启动 Server
+
+```bash
+# 配置数据库连接
+export DATABASE_URL="postgres://user:password@localhost:5432/plumber?sslmode=disable"
+
 # 运行 Server
 go run cmd/plumber-server/main.go
 ```
@@ -146,6 +225,96 @@ plumber/
 └── SRS.md               # 软件需求规格说明书
 ```
 
+## Docker 部署
+
+### Dockerfile 说明
+
+项目使用多阶段构建，优化镜像大小：
+
+```dockerfile
+# 第一阶段：构建
+FROM golang:1.24-alpine AS builder
+# ... 编译 Go 代码
+
+# 第二阶段：运行
+FROM alpine:latest
+# ... 只包含二进制文件
+```
+
+最终镜像大小约 **20-30MB**。
+
+### 配置文件
+
+Server 使用 TOML 配置文件（**不是环境变量**）：
+
+```bash
+# 复制配置文件模板
+cp configs/server.toml.example configs/server.toml
+
+# 编辑配置
+vim configs/server.toml
+```
+
+配置文件包含：
+- Server 监听地址和端口
+- 数据库连接信息
+- JWT 和认证配置
+
+### 常用命令
+
+```bash
+# 构建镜像
+make docker-build
+
+# 运行容器（挂载配置文件）
+docker run -d \
+  --name plumber-server \
+  -p 52281:52281 \
+  -v $(pwd)/configs/server.toml:/app/configs/server.toml:ro \
+  plumber-server:latest
+
+# 查看日志
+docker logs -f plumber-server
+
+# 重启容器
+docker restart plumber-server
+
+# 停止并删除容器
+docker stop plumber-server
+docker rm plumber-server
+
+# 健康检查
+curl http://localhost:52281/health
+```
+
+### 使用 Docker Compose
+
+配置文件会自动挂载到容器：
+
+```bash
+# 启动服务
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f
+
+# 停止服务
+docker-compose down
+```
+
+### 生产环境部署
+
+```bash
+# 使用生产环境配置
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+生产环境特性：
+- 配置文件只读挂载
+- 日志轮转（最大 10MB，保留 3 个文件）
+- 自动重启策略
+- 健康检查监控
+
 ## 配置说明
 
 ### Server 配置
@@ -169,6 +338,20 @@ plumber/
 命令行参数：
 - `--config` - 配置文件路径（默认 agent.json）
 - `--workdir` - 默认工作目录（默认 /tmp）
+
+### Docker 网络配置
+
+如果 Agent 需要连接到 Docker 容器中的 Server：
+
+```json
+{
+  "id": "agent-uuid",
+  "token": "agent-token",
+  "server_addr": "http://host.docker.internal:52281"
+}
+```
+
+或者使用宿主机 IP 地址。
 
 ## API 文档
 

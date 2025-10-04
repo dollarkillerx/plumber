@@ -124,9 +124,8 @@ install: build
 
 # Docker构建
 docker-build:
-	@echo "Building Docker images..."
-	docker build -t plumber-server:$(VERSION) -f docker/Dockerfile.server .
-	docker build -t plumber-agent:$(VERSION) -f docker/Dockerfile.agent .
+	@echo "Building Docker image..."
+	docker build -t plumber-server:$(VERSION) -t plumber-server:latest .
 
 # 帮助
 help:

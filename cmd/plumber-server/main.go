@@ -71,6 +71,12 @@ func main() {
 	mux.Handle("/api/rpc", apiHandler)
 	mux.Handle("/api/webssh", websshHandler)
 
+	// 健康检查端点
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
 	// 创建HTTP服务器
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{

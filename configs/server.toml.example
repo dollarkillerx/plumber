@@ -1,9 +1,9 @@
 [server]
 host = "0.0.0.0"
-port = "52181"
-public_addr = "http://your-server-ip:52181"  # 公网访问地址（可选）
-export_endpoint = "http://your-server-ip:52181"  # Agent配置文件中的server_addr
-debug = true
+port = "52281"
+public_addr = "http://your-server-ip:52281"  # 公网访问地址（可选）
+export_endpoint = "http://your-server-ip:52281"  # Agent配置文件中的server_addr
+debug = false
 
 [database]
 host = "localhost"
