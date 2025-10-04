@@ -1,176 +1,209 @@
-# Plumber 软件需求规格说明书（SRS）
+# Plumber
 
-## 1. 系统概要
+Plumber 是一个基于 C/S 架构的自动化任务编排与分发平台，用于统一管理多台服务器上的任务执行。
 
-**Plumber** 是一个基于 **C/S 架构** 的自动化任务编排与分发平台，旨在通过 Web 界面和命令行工具统一管理多台服务器上的任务执行，简化批量运维、部署、批处理等场景下的自动化操作。
+## 项目概述
 
-系统包含以下组件：
+Plumber 通过 Web 界面和命令行工具，简化批量运维、部署、批处理等场景下的自动化操作。
 
-* **Plumber Server**：核心控制中心，负责管理任务、接收 Agent 注册、分发指令、收集执行结果等。
-* **Plumber Web**：Web 管理面板，提供可视化界面，用于服务器管理、任务编排、任务监控和日志查看。
-* **Plumber Agent Server**：部署在目标服务器上的轻量级代理，负责接收和执行任务指令，并上报执行结果与心跳。
-* **Plumber CLI**：命令行工具，支持从终端触发任务、查看任务状态、配置连接等。
+### 核心组件
 
----
+- **Plumber Server** - 核心控制中心，负责任务管理、Agent 管理、任务分发和结果收集
+- **Plumber Web** - Web 管理界面，提供可视化的任务编排、服务器管理和日志查看
+- **Plumber Agent** - 轻量级代理，部署在目标服务器上执行任务
+- **Plumber CLI** - 命令行工具，支持快速任务触发和状态查询
 
-## 2. 系统功能结构
+## 快速开始
 
-```
-Plumber
-├─ Plumber Server（控制中心）
-│  ├─ 管理 Agent 注册 & 心跳
-│  ├─ 管理任务及执行流程
-│  └─ 任务执行状态和日志存储
-│
-├─ Plumber Web（管理面板）
-│  ├─ 服务器管理（SSH 部署 Agent）
-│  ├─ 任务编排与配置（TOML）
-│  ├─ 手动触发任务
-│  └─ 实时查看任务执行日志
-│
-├─ Plumber Agent（执行节点）
-│  ├─ 注册并维持心跳
-│  ├─ 接收任务并执行
-│  └─ 上传执行结果和日志
-│
-└─ Plumber CLI（命令行工具）
-   ├─ 任务触发
-   ├─ 查看任务列表
-   └─ 设置连接配置
-```
-
----
-
-## 3. 主要功能说明
-
-### 3.1 Plumber Web 功能
-
-#### 3.1.1 服务器管理
-
-* **添加服务器**：输入 SSH 信息后，系统自动连接远程服务器并执行后台预设的部署脚本安装 Agent。
-* **服务器列表**：显示所有已注册 Agent 的状态（在线/离线、UUID、IP、最近心跳时间等）。
-
-#### 3.1.2 Agent 注册与心跳
-
-* Agent 安装完成后自动生成本地 UUID 并向 Plumber Server 注册。
-* Agent 定期发送心跳包以维持连接状态，若断连则状态标记为“离线”。
-
-#### 3.1.3 任务编排与配置
-
-* 新建任务时采用 TOML 格式配置步骤，示例如下：
-
-```toml
-[[step]]
-ServerID = "uuid-xxx"
-Path     = "/opt/project"
-CMD      = "sh deploy.sh"
-
-[[step]]
-ServerID = "uuid-yyy"
-Path     = "/data/scripts"
-CMD      = "python3 main.py"
-```
-
-* 每个任务可包含多个步骤，按顺序依次执行。
-* 每个步骤返回码为 `0` 时继续执行下一步，否则任务中断。
-
-#### 3.1.4 任务执行与日志
-
-* 可通过 Web 页面点击按钮手动执行任务。
-* 实时展示每个步骤的执行输出和状态（运行中/成功/失败）。
-* 支持历史任务日志查询。
-
----
-
-### 3.2 Plumber Agent 功能
-
-* **注册与身份标识**：首次运行自动生成 UUID，并向 Plumber Server 注册。
-* **心跳机制**：定期向 Server 报告状态。
-* **任务执行**：
-
-  * 接收执行指令，进入指定目录运行命令。
-  * 执行日志实时回传给 Server。
-  * 返回退出码（`echo $?`）用于判断下一步骤是否继续。
-
----
-
-### 3.3 Plumber CLI 功能
-
-#### 3.3.1 基础配置
+### 启动 Server
 
 ```bash
-plumber-cli set-config --url https://plumber.example.com --token <ACCESS_TOKEN>
+# 运行 Server
+go run cmd/plumber-server/main.go
 ```
 
-#### 3.3.2 任务列表
+Server 默认监听端口：`52281`
+
+### 启动 Web 界面
 
 ```bash
-plumber-cli task list
+cd plumber-web
+pnpm install
+pnpm dev
 ```
 
-* 显示所有任务的 `ID` 和 `名称`。
+Web 界面访问地址：`http://localhost:5173`
 
-#### 3.3.3 任务触发
+### 部署 Agent
+
+1. 在 Web 界面创建配置文件 `agent.json`：
+
+```json
+{
+  "id": "agent-uuid-here",
+  "token": "agent-token-here",
+  "server_addr": "http://server-ip:52281"
+}
+```
+
+2. 运行 Agent：
 
 ```bash
-plumber-cli task run <task_id>
+go run cmd/plumber-agent/main.go --config agent.json
 ```
 
-* 执行指定任务。
-* CLI 仅显示各步骤的执行结果（退出码），不显示详细日志。
+Agent 特性：
+- ✅ 每 1 秒发送心跳
+- ✅ 每 500ms 拉取待执行任务
+- ✅ 无需监听端口（适合 NAT 环境）
 
----
+## 核心特性
 
-## 4. 系统流程
+### 任务编排
+- 可视化的步骤构建器
+- 支持多服务器、多步骤任务
+- 顺序执行保证
+- 实时状态追踪
 
-### 4.1 Agent 注册流程
+### 任务执行
+- **Pull 模式**：Agent 主动拉取任务，适合 NAT 环境
+- 数据库行锁防止任务重复分配
+- 自动检查前序步骤完成状态
+- 完整的命令输出捕获
+
+### 执行历史
+- 查看最近 20 次执行记录
+- 每个步骤的详细信息：
+  - 执行路径和命令
+  - 退出码
+  - 完整的标准输出/错误输出
+  - 执行耗时
+
+### 服务器管理
+- Agent 在线状态监控
+- 心跳检测
+- 一键复制 Agent UUID
+
+## 技术栈
+
+### 后端
+- Go 1.24+
+- PostgreSQL
+- GORM
+- JSON-RPC 2.0
+
+### 前端
+- Vue 3
+- TypeScript
+- Pinia
+- Tailwind CSS
+
+## 架构设计
+
+### 任务分发流程
 
 ```
-[Agent] → 生成 UUID → 注册 → [Server] 存储 Agent 信息 → 心跳维持
+用户触发任务
+    ↓
+Server 创建步骤记录 (status=pending)
+    ↓
+Agent 轮询拉取任务 (500ms 间隔)
+    ↓
+Server 返回可执行步骤（带行锁）
+    ↓
+Agent 执行命令
+    ↓
+Agent 上报结果 (status=success/failed)
+    ↓
+Server 更新状态，准备下一步骤
 ```
 
-### 4.2 部署流程
+### 并发安全机制
+
+- PostgreSQL `FOR UPDATE SKIP LOCKED` 行锁
+- 事务内原子查询和标记
+- 前序步骤完成状态检查
+
+## 项目结构
 
 ```
-[Web] 输入 SSH 信息 → 后台执行部署脚本 → 安装 Agent → 自动注册 Server
+plumber/
+├── cmd/
+│   ├── plumber-server/    # Server 入口
+│   ├── plumber-agent/     # Agent 入口
+│   └── plumber-cli/       # CLI 工具
+├── internal/
+│   ├── server/
+│   │   ├── api/          # RPC 方法和任务执行器
+│   │   └── storage/      # 数据库操作
+│   └── agent/
+│       ├── client/       # Agent RPC 客户端
+│       └── executor/     # 命令执行器
+├── pkg/
+│   ├── models/           # 数据模型
+│   └── jsonrpc/          # JSON-RPC 框架
+├── plumber-web/          # Vue 前端
+└── SRS.md               # 软件需求规格说明书
 ```
 
-### 4.3 任务执行流程
+## 配置说明
 
+### Server 配置
+
+环境变量：
+- `DATABASE_URL` - PostgreSQL 连接字符串
+- `SERVER_PORT` - Server 监听端口（默认 52281）
+- `DEBUG` - 是否开启调试日志
+
+### Agent 配置
+
+`agent.json` 文件：
+```json
+{
+  "id": "agent-uuid",
+  "token": "agent-token",
+  "server_addr": "http://server:52281"
+}
 ```
-[Web/CLI] 触发任务
-   ↓
-[Server] 按步骤发送执行指令
-   ↓
-[Agent] 执行命令 → 返回日志与退出码
-   ↓
-[Server] 判断是否继续下一步 → 更新状态
-   ↓
-[Web] 展示实时日志和执行状态
+
+命令行参数：
+- `--config` - 配置文件路径（默认 agent.json）
+- `--workdir` - 默认工作目录（默认 /tmp）
+
+## API 文档
+
+详细的 JSON-RPC API 文档请参考 [SRS.md](./SRS.md)
+
+## 开发指南
+
+### 运行测试
+
+```bash
+# 运行所有测试
+go test ./...
+
+# 运行特定包的测试
+go test ./internal/server/storage
 ```
 
----
+### 构建
 
-## 5. 日志与监控要求
+```bash
+# 构建 Server
+go build -o bin/plumber-server cmd/plumber-server/main.go
 
-* 每个步骤执行的标准输出、错误输出均需完整记录。
-* 任务执行历史需可查询（含执行时间、状态、日志、耗时等）。
-* 心跳异常时，系统需能标记 Agent 离线并提示。
+# 构建 Agent
+go build -o bin/plumber-agent cmd/plumber-agent/main.go
 
----
+# 构建 Web
+cd plumber-web
+pnpm build
+```
 
-## 6. 权限与安全
+## 许可证
 
-* Plumber Server 提供基于 `token` 的认证机制。
-* 所有 CLI 和 Web 请求均需携带有效 `token`。
-* Agent 与 Server 之间通信应使用jsonrpc
+MIT License
 
----
+## 贡献
 
-* ✅ 支持任务并行执行
-* ✅ 提供 REST API 供外部系统触发任务。
-
----
-
-✅ **总结：**
-Plumber 是一个面向自动化运维、部署、批处理任务的统一编排系统，具备「服务器管理」「任务编排」「命令分发」「日志收集」「CLI 快速操作」五大核心功能，适用于大规模服务器场景下的批量自动化任务执行。
+欢迎提交 Issue 和 Pull Request！
