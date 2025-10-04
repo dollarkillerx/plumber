@@ -28,5 +28,20 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Plumber specific
+bin/
+.plumber_agent_id
+.plumber_cli_config
+configs/server.toml
+!configs/server.toml.example
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

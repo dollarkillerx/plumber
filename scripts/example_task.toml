@@ -1,0 +1,26 @@
+# Plumber任务配置示例
+
+[[step]]
+ServerID = "00000000-0000-0000-0000-000000000001"  # Agent UUID
+Path     = "/tmp"
+CMD      = "echo 'Step 1: Starting deployment'"
+
+[[step]]
+ServerID = "00000000-0000-0000-0000-000000000001"
+Path     = "/opt/project"
+CMD      = "git pull origin main"
+
+[[step]]
+ServerID = "00000000-0000-0000-0000-000000000001"
+Path     = "/opt/project"
+CMD      = "npm install"
+
+[[step]]
+ServerID = "00000000-0000-0000-0000-000000000001"
+Path     = "/opt/project"
+CMD      = "npm run build"
+
+[[step]]
+ServerID = "00000000-0000-0000-0000-000000000002"  # 另一台服务器
+Path     = "/data/scripts"
+CMD      = "sh restart_service.sh"

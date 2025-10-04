@@ -1,0 +1,22 @@
+[server]
+host = "0.0.0.0"
+port = "52181"
+public_addr = "http://your-server-ip:52181"  # 公网访问地址（可选）
+export_endpoint = "http://your-server-ip:52181"  # Agent配置文件中的server_addr
+debug = true
+
+[database]
+host = "localhost"
+port = 5432
+user = "plumber"
+password = "plumber123"
+dbname = "plumber"
+sslmode = "disable"
+
+[auth]
+jwt_secret = "your-secret-key-change-in-production"
+token_expiration = 168  # 7 days in hours
+agent_token = "plumber-agent-secret-token-change-me"  # Agent认证Token
+admin_username = "admin"  # 管理员用户名
+admin_password = "admin123"  # 管理员密码
+encryption_key = "12345678901234567890123456789012"  # 数据加密密钥（必须是32字节）
