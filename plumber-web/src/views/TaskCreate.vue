@@ -127,14 +127,18 @@
 
                   <!-- Command -->
                   <div>
-                    <label class="block text-sm font-medium text-gray-600 mb-1">Command *</label>
-                    <input
+                    <label class="block text-sm font-medium text-gray-600 mb-1">
+                      Command *
+                      <span class="text-gray-400 font-normal text-xs ml-1">(支持多行)</span>
+                    </label>
+                    <textarea
                       v-model="step.cmd"
-                      type="text"
+                      rows="4"
                       required
-                      class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="git pull origin main"
-                    />
+                      @keydown.enter.stop
+                      class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                      placeholder="git pull origin main&#10;npm install&#10;npm run build"
+                    ></textarea>
                   </div>
                 </div>
               </div>
@@ -235,7 +239,13 @@ function generateTOML(): string {
     toml += `[[step]]\n`
     toml += `ServerID = "${step.serverId}"\n`
     toml += `Path     = "${step.path}"\n`
-    toml += `CMD      = "${step.cmd}"\n\n`
+
+    // 处理多行命令 - 如果命令包含换行符，使用三引号语法
+    if (step.cmd.includes('\n')) {
+      toml += `CMD      = """\n${step.cmd}\n"""\n\n`
+    } else {
+      toml += `CMD      = "${step.cmd}"\n\n`
+    }
   }
   return toml.trim()
 }

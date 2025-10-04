@@ -1,26 +1,54 @@
 # Plumber任务配置示例
 
+# 单行命令示例
 [[step]]
 ServerID = "00000000-0000-0000-0000-000000000001"  # Agent UUID
 Path     = "/tmp"
 CMD      = "echo 'Step 1: Starting deployment'"
 
+# 多行命令示例 - 使用三引号语法
 [[step]]
 ServerID = "00000000-0000-0000-0000-000000000001"
 Path     = "/opt/project"
-CMD      = "git pull origin main"
+CMD      = """
+git pull origin main
+npm install
+npm run build
+"""
 
+# 多行 Shell 脚本示例
 [[step]]
 ServerID = "00000000-0000-0000-0000-000000000001"
 Path     = "/opt/project"
-CMD      = "npm install"
+CMD      = """
+#!/bin/bash
+set -e
+echo "Starting deployment..."
+if [ -f "package.json" ]; then
+  npm install
+  npm run build
+fi
+echo "Deployment completed!"
+"""
 
+# 单行命令示例
 [[step]]
 ServerID = "00000000-0000-0000-0000-000000000001"
 Path     = "/opt/project"
-CMD      = "npm run build"
+CMD      = "systemctl restart myapp"
 
+# 另一台服务器上的多行任务
 [[step]]
 ServerID = "00000000-0000-0000-0000-000000000002"  # 另一台服务器
 Path     = "/data/scripts"
-CMD      = "sh restart_service.sh"
+CMD      = """
+#!/bin/bash
+echo "Checking service status..."
+systemctl status myapp
+if [ $? -eq 0 ]; then
+  sh restart_service.sh
+else
+  echo "Service is not running, starting it..."
+  systemctl start myapp
+fi
+"""
