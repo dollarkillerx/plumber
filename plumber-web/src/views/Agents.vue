@@ -4,6 +4,12 @@
       <h2 class="text-2xl font-bold text-gray-800">Agent Management</h2>
       <div class="space-x-2">
         <button
+          @click="showConfigModal = true"
+          class="bg-purple-600 text-white px-4 py-2 rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+        >
+          Deploy Config
+        </button>
+        <button
           @click="showCreateModal = true"
           class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
         >
@@ -105,6 +111,14 @@
             <td class="px-6 py-4 text-sm text-gray-500">
               <div class="flex flex-wrap gap-2">
                 <button
+                  v-if="agent.ssh_host"
+                  @click="handleDeploy(agent)"
+                  :disabled="deploying === agent.id"
+                  class="text-purple-600 hover:text-purple-900 whitespace-nowrap disabled:opacity-50"
+                >
+                  {{ deploying === agent.id ? 'Deploying...' : 'Deploy' }}
+                </button>
+                <button
                   @click="openEditModal(agent)"
                   class="text-indigo-600 hover:text-indigo-900 whitespace-nowrap"
                 >
@@ -134,6 +148,75 @@
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- Deploy Config Modal -->
+    <div
+      v-if="showConfigModal"
+      class="fixed inset-0 overflow-y-auto h-full w-full z-50 flex items-center justify-center"
+      @click.self="showConfigModal = false"
+    >
+      <div class="relative mx-auto p-6 border border-gray-300 w-full max-w-2xl shadow-xl rounded-lg bg-white">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-medium leading-6 text-gray-900">
+            Deploy Configuration
+          </h3>
+          <button
+            @click="showConfigModal = false"
+            class="text-gray-400 hover:text-gray-600"
+          >
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">Install Script URL</label>
+            <input
+              v-model="deployConfig.scriptUrl"
+              type="text"
+              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="https://raw.githubusercontent.com/.../install_agent.sh"
+            />
+            <p class="mt-1 text-xs text-gray-500">脚本将通过 SSH 下载并执行</p>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">Install Directory</label>
+            <input
+              v-model="deployConfig.installDir"
+              type="text"
+              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="/opt/plumber_agent"
+            />
+            <p class="mt-1 text-xs text-gray-500">Agent 安装目录，部署前会被删除</p>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">Server Address</label>
+            <input
+              v-model="deployConfig.serverAddr"
+              type="text"
+              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="http://your-server:52281"
+            />
+            <p class="mt-1 text-xs text-gray-500">Plumber Server 地址，写入 Agent 配置文件</p>
+          </div>
+          <div class="flex justify-end space-x-3 pt-4">
+            <button
+              @click="showConfigModal = false"
+              class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+            >
+              Close
+            </button>
+            <button
+              @click="saveDeployConfig"
+              class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Create/Edit Agent Modal -->
@@ -259,8 +342,10 @@ const error = computed(() => agentStore.error)
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
+const showConfigModal = ref(false)
 const creating = ref(false)
 const updating = ref(false)
+const deploying = ref('')
 const createError = ref('')
 const editingAgentId = ref('')
 const createForm = ref<CreateAgentParams>({
@@ -271,6 +356,13 @@ const createForm = ref<CreateAgentParams>({
   ssh_auth_type: 'none',
   ssh_password: '',
   ssh_private_key: '',
+})
+
+// 部署配置 - 从 localStorage 加载
+const deployConfig = ref({
+  scriptUrl: localStorage.getItem('plumber_deploy_script_url') || 'https://raw.githubusercontent.com/dollarkillerx/plumber/refs/heads/main/scripts/install_agent.sh',
+  installDir: localStorage.getItem('plumber_deploy_install_dir') || '/opt/plumber_agent',
+  serverAddr: localStorage.getItem('plumber_deploy_server_addr') || 'http://localhost:52281',
 })
 
 onMounted(() => {
@@ -400,5 +492,56 @@ function copyToClipboard(text: string) {
   }).catch(err => {
     console.error('Failed to copy:', err)
   })
+}
+
+function saveDeployConfig() {
+  localStorage.setItem('plumber_deploy_script_url', deployConfig.value.scriptUrl)
+  localStorage.setItem('plumber_deploy_install_dir', deployConfig.value.installDir)
+  localStorage.setItem('plumber_deploy_server_addr', deployConfig.value.serverAddr)
+  showConfigModal.value = false
+  alert('Deploy configuration saved!')
+}
+
+async function handleDeploy(agent: Agent) {
+  if (!confirm(`Deploy agent to ${agent.name} (${agent.ssh_host})?\\n\\nThis will:\\n1. Delete ${deployConfig.value.installDir}\\n2. Write agent config\\n3. Run install script\\n\\nContinue?`)) {
+    return
+  }
+
+  deploying.value = agent.id
+
+  try {
+    // 调用部署 API
+    const response = await fetch('/api/rpc', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'plumber.agent.deploy',
+        params: {
+          agent_id: agent.id,
+          script_url: deployConfig.value.scriptUrl,
+          install_dir: deployConfig.value.installDir,
+          server_addr: deployConfig.value.serverAddr,
+        },
+        id: Date.now().toString(),
+      }),
+    })
+
+    const result = await response.json()
+
+    if (result.error) {
+      throw new Error(result.error.message || 'Deploy failed')
+    }
+
+    alert(`Deploy successful!\\n\\nOutput:\\n${result.result?.output || 'No output'}`)
+    await fetchData()
+  } catch (err: any) {
+    alert('Deploy failed: ' + (err.message || 'Unknown error'))
+  } finally {
+    deploying.value = ''
+  }
 }
 </script>

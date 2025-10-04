@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
 	"time"
 
 	"github.com/google/uuid"
@@ -687,6 +689,129 @@ func (m *GetAgentConfigMethod) Execute(ctx context.Context, params json.RawMessa
 	}, nil
 }
 
+// DeployAgentMethod 部署Agent到服务器
+type DeployAgentMethod struct {
+	storage    storage.Storage
+	agentToken string
+	serverAddr string
+}
+
+func NewDeployAgentMethod(storage storage.Storage, agentToken, serverAddr string) *DeployAgentMethod {
+	return &DeployAgentMethod{
+		storage:    storage,
+		agentToken: agentToken,
+		serverAddr: serverAddr,
+	}
+}
+
+func (m *DeployAgentMethod) Name() string {
+	return "plumber.agent.deploy"
+}
+
+func (m *DeployAgentMethod) RequireAuth() bool {
+	return true
+}
+
+type DeployAgentParams struct {
+	AgentID    string `json:"agent_id"`
+	ScriptURL  string `json:"script_url"`
+	InstallDir string `json:"install_dir"`
+	ServerAddr string `json:"server_addr"`
+}
+
+func (m *DeployAgentMethod) Execute(ctx context.Context, params json.RawMessage) (interface{}, error) {
+	var p DeployAgentParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+
+	agentUUID, err := uuid.Parse(p.AgentID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid agent_id: %w", err)
+	}
+
+	agent, err := m.storage.GetAgent(ctx, agentUUID)
+	if err != nil {
+		return nil, fmt.Errorf("agent not found: %w", err)
+	}
+
+	if agent.SSHHost == "" {
+		return nil, fmt.Errorf("agent has no SSH configuration")
+	}
+
+	// 使用 SSH 执行部署
+	output, err := m.deployViaSSH(agent, p)
+	if err != nil {
+		return nil, fmt.Errorf("deploy failed: %w", err)
+	}
+
+	return map[string]interface{}{
+		"status": "success",
+		"output": output,
+	}, nil
+}
+
+func (m *DeployAgentMethod) deployViaSSH(agent *models.Agent, params DeployAgentParams) (string, error) {
+	// 使用系统 SSH 命令（简单实现）
+	// 生成 agent 配置
+	config := map[string]interface{}{
+		"id":          agent.ID.String(),
+		"token":       m.agentToken,
+		"server_addr": params.ServerAddr,
+	}
+	configJSON, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to generate config: %w", err)
+	}
+
+	// 构建部署命令
+	deployScript := fmt.Sprintf(`
+set -e
+# 1. 删除安装目录
+sudo rm -rf %s || true
+# 2. 创建配置目录
+sudo mkdir -p %s
+# 3. 写入配置文件
+cat > /tmp/agent.json << 'EOF'
+%s
+EOF
+sudo mv /tmp/agent.json %s/agent.json
+# 4. 下载并执行安装脚本
+curl -sSL "%s" | sudo bash
+`, params.InstallDir, params.InstallDir, string(configJSON), params.InstallDir, params.ScriptURL)
+
+	// 根据认证类型构建 SSH 命令
+	var sshCmd string
+	if agent.SSHAuthType == "password" && agent.SSHPassword != "" {
+		// 使用 sshpass
+		sshCmd = fmt.Sprintf(`sshpass -p '%s' ssh -o StrictHostKeyChecking=no %s@%s -p %d '%s'`,
+			agent.SSHPassword, agent.SSHUser, agent.SSHHost, agent.SSHPort, deployScript)
+	} else if agent.SSHAuthType == "key" && agent.SSHPrivateKey != "" {
+		// 暂时保存私钥到临时文件
+		tmpKeyFile := fmt.Sprintf("/tmp/ssh_key_%s", agent.ID.String())
+		if err := os.WriteFile(tmpKeyFile, []byte(agent.SSHPrivateKey), 0600); err != nil {
+			return "", fmt.Errorf("failed to write SSH key: %w", err)
+		}
+		defer os.Remove(tmpKeyFile)
+
+		sshCmd = fmt.Sprintf(`ssh -i %s -o StrictHostKeyChecking=no %s@%s -p %d '%s'`,
+			tmpKeyFile, agent.SSHUser, agent.SSHHost, agent.SSHPort, deployScript)
+	} else {
+		// 无密码认证
+		sshCmd = fmt.Sprintf(`ssh -o StrictHostKeyChecking=no %s@%s -p %d '%s'`,
+			agent.SSHUser, agent.SSHHost, agent.SSHPort, deployScript)
+	}
+
+	// 执行 SSH 命令
+	cmd := exec.Command("bash", "-c", sshCmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("SSH command failed: %w\nOutput: %s", err, string(output))
+	}
+
+	return string(output), nil
+}
+
 // RegisterAllMethods 注册所有RPC方法
 func RegisterAllMethods(router *jsonrpc.Router, storage storage.Storage, jwtManager *auth.JWTManager, adminUsername, adminPassword, agentToken, serverAddr string) {
 	executor := NewTaskExecutor(storage)
@@ -699,6 +824,7 @@ func RegisterAllMethods(router *jsonrpc.Router, storage storage.Storage, jwtMana
 	router.Register(NewUpdateAgentMethod(storage))
 	router.Register(NewDeleteAgentMethod(storage))
 	router.Register(NewGetAgentConfigMethod(storage, agentToken, serverAddr))
+	router.Register(NewDeployAgentMethod(storage, agentToken, serverAddr))
 	router.Register(NewCreateTaskMethod(storage))
 	router.Register(NewUpdateTaskMethod(storage))
 	router.Register(NewListTasksMethod(storage))

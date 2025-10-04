@@ -8,7 +8,7 @@ DOWNLOAD_URL="https://github.com/dollarkillerx/plumber/releases/download/v0.0.1/
 SYSTEMD_URL="https://raw.githubusercontent.com/dollarkillerx/plumber/refs/heads/main/plumber-agent.service"
 INSTALL_DIR="/opt/plumber_agent"
 
-rm -rf $INSTALL_DIR || true
+# rm -rf $INSTALL_DIR || true
 
 rm -rf /etc/systemd/system/plumber-agent.service || true
 
