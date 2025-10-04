@@ -1,12 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,13 +17,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/plumber/plumber/internal/agent/client"
 	"github.com/plumber/plumber/internal/agent/executor"
-	"github.com/plumber/plumber/pkg/jsonrpc"
 )
 
 const (
 	agentIDFile     = ".plumber_agent_id"
 	agentConfigFile = "agent.json"
-	agentPort       = "52182"
 )
 
 var (
@@ -78,33 +77,16 @@ func main() {
 	// 创建执行器
 	exec := executor.NewExecutor(*workDir)
 
-	// 启动JSON-RPC服务器
-	router := jsonrpc.NewRouter()
-	router.Register(&ExecuteCommandMethod{
-		executor: exec,
-		client:   agentClient,
-	})
-
-	handler := &RPCHandler{router: router}
-
-	srv := &http.Server{
-		Addr:    ":" + agentPort,
-		Handler: handler,
-	}
-
-	go func() {
-		log.Printf("Agent RPC server starting on port %s", agentPort)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
-		}
-	}()
-
 	// 启动心跳
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go agentClient.StartHeartbeat(ctx, 30*time.Second)
+	go agentClient.StartHeartbeat(ctx, 1*time.Second)
 	log.Printf("Heartbeat started")
+
+	// 启动任务轮询
+	go agentClient.StartTaskPolling(ctx, exec, 500*time.Millisecond)
+	log.Printf("Task polling started")
 
 	// 等待中断信号
 	quit := make(chan os.Signal, 1)
@@ -112,14 +94,7 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down agent...")
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("Agent forced to shutdown: %v", err)
-	}
-
+	cancel() // 取消context，停止心跳和任务轮询
 	log.Println("Agent exited")
 }
 
@@ -149,90 +124,38 @@ func loadConfig(path string) (*AgentConfig, error) {
 	return &config, nil
 }
 
-// getOutboundIP 获取本机IP
+// getOutboundIP 获取公网IPv4地址
 func getOutboundIP() (string, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return "", err
-	}
-	defer conn.Close()
-
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return localAddr.IP.String(), nil
-}
-
-// RPCHandler JSON-RPC处理器
-type RPCHandler struct {
-	router *jsonrpc.Router
-}
-
-func (h *RPCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	if r.Method != http.MethodPost {
-		jsonrpc.NewErrorResponse(nil, jsonrpc.InvalidRequest, "Only POST method is allowed")
-		return
+	// 尝试多个公共IP查询服务（仅IPv4）
+	services := []string{
+		"https://api.ipify.org?format=text",
+		"https://ipv4.icanhazip.com",
+		"https://v4.ident.me",
+		"https://api.my-ip.io/ip",
 	}
 
-	var req jsonrpc.Request
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		resp := jsonrpc.NewErrorResponse(nil, jsonrpc.ParseError, "Failed to parse request")
-		json.NewEncoder(w).Encode(resp)
-		return
+	client := &http.Client{
+		Timeout: 5 * time.Second,
 	}
 
-	response := h.router.Handle(r.Context(), &req)
-	json.NewEncoder(w).Encode(response)
-}
-
-// ExecuteCommandMethod 执行命令方法
-type ExecuteCommandMethod struct {
-	executor *executor.Executor
-	client   *client.Client
-}
-
-func (m *ExecuteCommandMethod) Name() string {
-	return "plumber.agent.execute"
-}
-
-func (m *ExecuteCommandMethod) RequireAuth() bool {
-	return false
-}
-
-type ExecuteCommandParams struct {
-	StepID  string `json:"step_id"`
-	Path    string `json:"path"`
-	Command string `json:"command"`
-}
-
-func (m *ExecuteCommandMethod) Execute(ctx context.Context, params json.RawMessage) (interface{}, error) {
-	var p ExecuteCommandParams
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-
-	stepID, err := uuid.Parse(p.StepID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid step_id: %w", err)
-	}
-
-	// 异步执行命令
-	go func() {
-		result := m.executor.ExecuteWithTimeout(p.Path, p.Command, 10*time.Minute)
-
-		status := "success"
-		if result.ExitCode != 0 {
-			status = "failed"
+	for _, service := range services {
+		resp, err := client.Get(service)
+		if err != nil {
+			continue
 		}
+		defer resp.Body.Close()
 
-		// 上报结果
-		if err := m.client.ReportStepResult(stepID, status, result.ExitCode, result.Output); err != nil {
-			log.Printf("Failed to report step result: %v", err)
+		if resp.StatusCode == http.StatusOK {
+			body, err := io.ReadAll(resp.Body)
+			if err == nil && len(body) > 0 {
+				// 去除可能的空白字符
+				ip := string(bytes.TrimSpace(body))
+				if ip != "" {
+					return ip, nil
+				}
+			}
 		}
-	}()
+	}
 
-	return map[string]interface{}{
-		"status":  "accepted",
-		"message": "Command execution started",
-	}, nil
+	return "", fmt.Errorf("failed to get public IP from all services")
 }

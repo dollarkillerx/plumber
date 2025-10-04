@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -239,6 +240,63 @@ func (m *CreateTaskMethod) Execute(ctx context.Context, params json.RawMessage) 
 	}, nil
 }
 
+// UpdateTaskMethod 更新任务
+type UpdateTaskMethod struct {
+	storage storage.Storage
+}
+
+func NewUpdateTaskMethod(storage storage.Storage) *UpdateTaskMethod {
+	return &UpdateTaskMethod{storage: storage}
+}
+
+func (m *UpdateTaskMethod) Name() string {
+	return "plumber.task.update"
+}
+
+func (m *UpdateTaskMethod) RequireAuth() bool {
+	return true
+}
+
+type UpdateTaskParams struct {
+	TaskID      string `json:"task_id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Config      string `json:"config"`
+}
+
+func (m *UpdateTaskMethod) Execute(ctx context.Context, params json.RawMessage) (interface{}, error) {
+	var p UpdateTaskParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+
+	taskUUID, err := uuid.Parse(p.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid task_id: %w", err)
+	}
+
+	task, err := m.storage.GetTask(ctx, taskUUID)
+	if err != nil {
+		return nil, fmt.Errorf("task not found: %w", err)
+	}
+
+	// 更新字段
+	if p.Name != "" {
+		task.Name = p.Name
+	}
+	task.Description = p.Description
+	task.Config = p.Config
+
+	if err := m.storage.UpdateTask(ctx, task); err != nil {
+		return nil, fmt.Errorf("failed to update task: %w", err)
+	}
+
+	return map[string]interface{}{
+		"status":  "updated",
+		"message": "Task updated successfully",
+	}, nil
+}
+
 // ListTasksMethod 列出所有任务
 type ListTasksMethod struct {
 	storage storage.Storage
@@ -264,6 +322,74 @@ func (m *ListTasksMethod) Execute(ctx context.Context, params json.RawMessage) (
 
 	return map[string]interface{}{
 		"tasks": tasks,
+	}, nil
+}
+
+// PollTaskMethod Agent拉取待执行任务
+type PollTaskMethod struct {
+	storage storage.Storage
+}
+
+func NewPollTaskMethod(storage storage.Storage) *PollTaskMethod {
+	return &PollTaskMethod{storage: storage}
+}
+
+func (m *PollTaskMethod) Name() string {
+	return "plumber.agent.pollTask"
+}
+
+func (m *PollTaskMethod) RequireAuth() bool {
+	return false
+}
+
+type PollTaskParams struct {
+	AgentID string `json:"agent_id"`
+}
+
+func (m *PollTaskMethod) Execute(ctx context.Context, params json.RawMessage) (interface{}, error) {
+	var p PollTaskParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+
+	agentUUID, err := uuid.Parse(p.AgentID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid agent_id: %w", err)
+	}
+
+	// 获取待执行的步骤（限制1个，避免一次拉取太多）
+	// GetPendingStepsForAgent 内部已经使用事务+行锁来防止重复分配
+	steps, err := m.storage.GetPendingStepsForAgent(ctx, agentUUID, 1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending steps: %w", err)
+	}
+
+	if len(steps) == 0 {
+		return map[string]interface{}{
+			"has_task": false,
+		}, nil
+	}
+
+	step := steps[0]
+
+	// 更新步骤状态为running
+	step.Status = "running"
+	now := time.Now()
+	step.StartTime = &now
+	if err := m.storage.UpdateStepExecution(ctx, step); err != nil {
+		log.Printf("[Server] Failed to update step status: %v", err)
+	}
+
+	log.Printf("[Server] Assigned task to agent - AgentID: %s, StepID: %s, Command: %s",
+		agentUUID, step.ID, step.Command)
+
+	return map[string]interface{}{
+		"has_task": true,
+		"task": map[string]interface{}{
+			"step_id": step.ID.String(),
+			"path":    step.Path,
+			"command": step.Command,
+		},
 	}, nil
 }
 
@@ -574,8 +700,11 @@ func RegisterAllMethods(router *jsonrpc.Router, storage storage.Storage, jwtMana
 	router.Register(NewDeleteAgentMethod(storage))
 	router.Register(NewGetAgentConfigMethod(storage, agentToken, serverAddr))
 	router.Register(NewCreateTaskMethod(storage))
+	router.Register(NewUpdateTaskMethod(storage))
 	router.Register(NewListTasksMethod(storage))
+	router.Register(NewPollTaskMethod(storage))
 	router.Register(NewStepReportMethod(storage))
 	router.Register(NewRunTaskMethod(storage, executor))
 	router.Register(NewGetExecutionMethod(storage))
+	router.Register(NewListExecutionsMethod(storage))
 }

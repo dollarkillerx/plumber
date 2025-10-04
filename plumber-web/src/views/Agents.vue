@@ -23,12 +23,12 @@
       Error: {{ error }}
     </div>
 
-    <div class="bg-white shadow overflow-hidden sm:rounded-lg">
+    <div class="bg-white shadow overflow-x-auto sm:rounded-lg">
       <table class="min-w-full divide-y divide-gray-200">
         <thead class="bg-gray-50">
           <tr>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Name
+              Name / ID
             </th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               SSH Info
@@ -59,8 +59,20 @@
             </td>
           </tr>
           <tr v-for="agent in agents" :key="agent.id" class="hover:bg-gray-50">
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-              {{ agent.name }}
+            <td class="px-6 py-4 text-sm">
+              <div class="font-medium text-gray-900 whitespace-nowrap">{{ agent.name }}</div>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs text-gray-400 font-mono truncate max-w-[200px]" :title="agent.id">{{ agent.id }}</span>
+                <button
+                  @click="copyToClipboard(agent.id)"
+                  class="text-gray-400 hover:text-blue-600 transition-colors flex-shrink-0"
+                  title="Copy UUID"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </button>
+              </div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
               <span v-if="agent.ssh_host">
@@ -90,32 +102,34 @@
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
               {{ agent.last_heartbeat ? formatDate(agent.last_heartbeat) : '-' }}
             </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-              <button
-                @click="openEditModal(agent)"
-                class="text-indigo-600 hover:text-indigo-900 mr-3"
-              >
-                Edit
-              </button>
-              <button
-                @click="downloadConfig(agent.id)"
-                class="text-blue-600 hover:text-blue-900 mr-3"
-              >
-                Download Config
-              </button>
-              <button
-                v-if="agent.ssh_host"
-                @click="openWebSSH(agent)"
-                class="text-green-600 hover:text-green-900 mr-3"
-              >
-                WebSSH
-              </button>
-              <button
-                @click="handleDelete(agent.id, agent.name)"
-                class="text-red-600 hover:text-red-900"
-              >
-                Delete
-              </button>
+            <td class="px-6 py-4 text-sm text-gray-500">
+              <div class="flex flex-wrap gap-2">
+                <button
+                  @click="openEditModal(agent)"
+                  class="text-indigo-600 hover:text-indigo-900 whitespace-nowrap"
+                >
+                  Edit
+                </button>
+                <button
+                  @click="downloadConfig(agent.id)"
+                  class="text-blue-600 hover:text-blue-900 whitespace-nowrap"
+                >
+                  Download Config
+                </button>
+                <button
+                  v-if="agent.ssh_host"
+                  @click="openWebSSH(agent)"
+                  class="text-green-600 hover:text-green-900 whitespace-nowrap"
+                >
+                  WebSSH
+                </button>
+                <button
+                  @click="handleDelete(agent.id, agent.name)"
+                  class="text-red-600 hover:text-red-900 whitespace-nowrap"
+                >
+                  Delete
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -377,5 +391,14 @@ async function downloadConfig(agentId: string) {
 
 function formatDate(date: string) {
   return new Date(date).toLocaleString()
+}
+
+function copyToClipboard(text: string) {
+  navigator.clipboard.writeText(text).then(() => {
+    // 可以添加一个临时提示
+    alert('UUID copied to clipboard!')
+  }).catch(err => {
+    console.error('Failed to copy:', err)
+  })
 }
 </script>

@@ -9,6 +9,7 @@ import (
 	"github.com/plumber/plumber/pkg/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -33,12 +34,15 @@ type Storage interface {
 	// TaskExecution相关
 	CreateExecution(ctx context.Context, execution *models.TaskExecution) error
 	GetExecution(ctx context.Context, id uuid.UUID) (*models.TaskExecution, error)
+	ListExecutionsByTaskID(ctx context.Context, taskID uuid.UUID) ([]*models.TaskExecution, error)
 	UpdateExecution(ctx context.Context, execution *models.TaskExecution) error
 
 	// StepExecution相关
 	CreateStepExecution(ctx context.Context, step *models.StepExecution) error
 	UpdateStepExecution(ctx context.Context, step *models.StepExecution) error
 	GetStepExecution(ctx context.Context, id uuid.UUID) (*models.StepExecution, error)
+	GetPendingStepsForAgent(ctx context.Context, agentID uuid.UUID, limit int) ([]*models.StepExecution, error)
+	MarkStepAsAssigned(ctx context.Context, stepID uuid.UUID) error
 
 	// User相关
 	CreateUser(ctx context.Context, user *models.User) error
@@ -170,6 +174,21 @@ func (s *PostgresStorage) GetExecution(ctx context.Context, id uuid.UUID) (*mode
 	return &execution, nil
 }
 
+func (s *PostgresStorage) ListExecutionsByTaskID(ctx context.Context, taskID uuid.UUID) ([]*models.TaskExecution, error) {
+	var executions []*models.TaskExecution
+	if err := s.db.WithContext(ctx).
+		Preload("Steps", func(db *gorm.DB) *gorm.DB {
+			return db.Order("step_index ASC")
+		}).
+		Where("task_id = ?", taskID).
+		Order("created_at DESC").
+		Limit(20).
+		Find(&executions).Error; err != nil {
+		return nil, err
+	}
+	return executions, nil
+}
+
 func (s *PostgresStorage) UpdateExecution(ctx context.Context, execution *models.TaskExecution) error {
 	return s.db.WithContext(ctx).Save(execution).Error
 }
@@ -189,6 +208,74 @@ func (s *PostgresStorage) GetStepExecution(ctx context.Context, id uuid.UUID) (*
 		return nil, err
 	}
 	return &step, nil
+}
+
+func (s *PostgresStorage) GetPendingStepsForAgent(ctx context.Context, agentID uuid.UUID, limit int) ([]*models.StepExecution, error) {
+	var steps []*models.StepExecution
+
+	// 使用事务 + FOR UPDATE 行锁，防止并发问题
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 查询待执行的步骤
+		var candidates []*models.StepExecution
+		if err := tx.
+			Where("agent_id = ? AND status = ? AND assigned = ?", agentID, "pending", false).
+			Order("created_at ASC").
+			Limit(limit).
+			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Find(&candidates).Error; err != nil {
+			return err
+		}
+
+		// 对每个候选步骤，检查是否有未完成的前序步骤
+		for _, candidate := range candidates {
+			// 检查同一个 execution 中是否有更早的步骤还在运行
+			var runningPrevSteps int64
+			if err := tx.Model(&models.StepExecution{}).
+				Where("execution_id = ? AND step_index < ? AND status IN ?",
+					candidate.ExecutionID, candidate.StepIndex, []string{"pending", "running"}).
+				Count(&runningPrevSteps).Error; err != nil {
+				return err
+			}
+
+			// 如果有前序步骤未完成，跳过这个步骤
+			if runningPrevSteps > 0 {
+				continue
+			}
+
+			// 这个步骤可以执行
+			steps = append(steps, candidate)
+		}
+
+		// 在同一事务中立即标记为已分配
+		if len(steps) > 0 {
+			stepIDs := make([]uuid.UUID, len(steps))
+			for i, step := range steps {
+				stepIDs[i] = step.ID
+			}
+			if err := tx.Model(&models.StepExecution{}).
+				Where("id IN ?", stepIDs).
+				Update("assigned", true).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return steps, nil
+}
+
+func (s *PostgresStorage) MarkStepAsAssigned(ctx context.Context, stepID uuid.UUID) error {
+	// 这个方法现在不再需要，因为在 GetPendingStepsForAgent 中已经标记了
+	// 但保留以防其他地方使用
+	return s.db.WithContext(ctx).
+		Model(&models.StepExecution{}).
+		Where("id = ? AND assigned = ?", stepID, false).
+		Update("assigned", true).Error
 }
 
 // User相关方法

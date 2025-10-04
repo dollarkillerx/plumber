@@ -28,6 +28,9 @@ func NewTaskExecutor(storage storage.Storage) *TaskExecutor {
 
 // ExecuteTask 执行任务
 func (e *TaskExecutor) ExecuteTask(ctx context.Context, taskID uuid.UUID) error {
+	startTime := time.Now()
+	log.Printf("[Server] Starting task execution - TaskID: %s, Time: %s", taskID, startTime.Format("2006-01-02 15:04:05"))
+
 	// 获取任务
 	task, err := e.storage.GetTask(ctx, taskID)
 	if err != nil {
@@ -39,6 +42,8 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, taskID uuid.UUID) error 
 	if err := toml.Unmarshal([]byte(task.Config), &config); err != nil {
 		return fmt.Errorf("failed to parse task config: %w", err)
 	}
+
+	log.Printf("[Server] Task config parsed - TaskID: %s, Steps: %d", taskID, len(config.Steps))
 
 	// 创建执行记录
 	execution := &models.TaskExecution{
@@ -52,6 +57,8 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, taskID uuid.UUID) error 
 		return fmt.Errorf("failed to create execution: %w", err)
 	}
 
+	log.Printf("[Server] Execution created - ExecutionID: %s", execution.ID)
+
 	// 更新任务状态
 	task.Status = "running"
 	if err := e.storage.UpdateTask(ctx, task); err != nil {
@@ -61,9 +68,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, taskID uuid.UUID) error 
 	// 执行步骤
 	success := true
 	for i, step := range config.Steps {
+		log.Printf("[Server] Processing step %d/%d - Command: %s", i+1, len(config.Steps), step.CMD)
+
 		agentID, err := uuid.Parse(step.ServerID)
 		if err != nil {
-			log.Printf("Invalid agent ID in step %d: %v", i, err)
+			log.Printf("[Server] Invalid agent ID in step %d: %v", i, err)
 			success = false
 			break
 		}
@@ -71,47 +80,42 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, taskID uuid.UUID) error 
 		// 检查Agent是否在线
 		agent, err := e.storage.GetAgent(ctx, agentID)
 		if err != nil {
-			log.Printf("Agent %s not found: %v", agentID, err)
+			log.Printf("[Server] Agent %s not found: %v", agentID, err)
 			success = false
 			break
 		}
 
 		if agent.Status != "online" {
-			log.Printf("Agent %s is offline", agentID)
+			log.Printf("[Server] Agent %s is offline", agentID)
 			success = false
 			break
 		}
 
-		// 创建步骤执行记录
+		log.Printf("[Server] Creating step for agent - AgentID: %s", agentID)
+
+		// 创建步骤执行记录（状态为pending，等待agent拉取）
 		stepExec := &models.StepExecution{
 			ExecutionID: execution.ID,
 			StepIndex:   i,
 			AgentID:     agentID,
 			Path:        step.Path,
 			Command:     step.CMD,
-			Status:      "running",
+			Status:      "pending",
+			Assigned:    false,
 		}
-		stepStartTime := time.Now()
-		stepExec.StartTime = &stepStartTime
 
 		if err := e.storage.CreateStepExecution(ctx, stepExec); err != nil {
-			log.Printf("Failed to create step execution: %v", err)
+			log.Printf("[Server] Failed to create step execution: %v", err)
 			success = false
 			break
 		}
 
-		// 发送执行命令到Agent
-		if err := e.sendCommandToAgent(ctx, agent.IP, stepExec.ID, step.Path, step.CMD); err != nil {
-			log.Printf("Failed to send command to agent: %v", err)
-			stepExec.Status = "failed"
-			e.storage.UpdateStepExecution(ctx, stepExec)
-			success = false
-			break
-		}
+		log.Printf("[Server] Step created, waiting for agent to pull - StepID: %s", stepExec.ID)
+		log.Printf("[Server] Waiting for step completion - StepID: %s", stepExec.ID)
 
 		// 等待步骤完成(轮询检查状态)
 		if err := e.waitForStepCompletion(ctx, stepExec.ID); err != nil {
-			log.Printf("Step execution failed: %v", err)
+			log.Printf("[Server] Step execution failed: %v", err)
 			success = false
 			break
 		}
@@ -119,21 +123,25 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, taskID uuid.UUID) error 
 		// 检查退出码
 		updatedStep, err := e.storage.GetStepExecution(ctx, stepExec.ID)
 		if err != nil {
-			log.Printf("Failed to get step execution: %v", err)
+			log.Printf("[Server] Failed to get step execution: %v", err)
 			success = false
 			break
 		}
 
 		if updatedStep.ExitCode != nil && *updatedStep.ExitCode != 0 {
-			log.Printf("Step %d failed with exit code %d", i, *updatedStep.ExitCode)
+			log.Printf("[Server] Step %d failed with exit code %d", i, *updatedStep.ExitCode)
 			success = false
 			break
 		}
+
+		log.Printf("[Server] Step %d completed successfully", i+1)
 	}
 
 	// 更新执行状态
 	endTime := time.Now()
 	execution.EndTime = &endTime
+	duration := endTime.Sub(startTime)
+
 	if success {
 		execution.Status = "success"
 		task.Status = "success"
@@ -141,6 +149,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, taskID uuid.UUID) error 
 		execution.Status = "failed"
 		task.Status = "failed"
 	}
+
+	log.Printf("[Server] Task execution finished - TaskID: %s, ExecutionID: %s, Status: %s, StartTime: %s, EndTime: %s, Duration: %s",
+		taskID, execution.ID, execution.Status, startTime.Format("2006-01-02 15:04:05"),
+		endTime.Format("2006-01-02 15:04:05"), duration)
 
 	if err := e.storage.UpdateExecution(ctx, execution); err != nil {
 		log.Printf("Failed to update execution: %v", err)
@@ -155,32 +167,54 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, taskID uuid.UUID) error 
 
 // sendCommandToAgent 发送命令到Agent
 func (e *TaskExecutor) sendCommandToAgent(ctx context.Context, agentIP string, stepID uuid.UUID, path, cmd string) error {
+	// 构造参数
+	params := map[string]string{
+		"step_id": stepID.String(),
+		"path":    path,
+		"command": cmd,
+	}
+
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return fmt.Errorf("failed to marshal params: %w", err)
+	}
+
 	req := jsonrpc.Request{
 		JSONRPC: "2.0",
 		Method:  "plumber.agent.execute",
-		Params: json.RawMessage(fmt.Sprintf(`{
-			"step_id": "%s",
-			"path": "%s",
-			"command": "%s"
-		}`, stepID, path, cmd)),
-		ID: stepID.String(),
+		Params:  json.RawMessage(paramsJSON),
+		ID:      stepID.String(),
 	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal request: %w", err)
 	}
+
+	url := fmt.Sprintf("http://%s:52182/rpc", agentIP)
+	log.Printf("[Server] Sending HTTP request to agent - URL: %s, Body: %s", url, string(body))
 
 	// 发送HTTP请求到Agent
 	resp, err := http.Post(
-		fmt.Sprintf("http://%s:52182/rpc", agentIP),
+		url,
 		"application/json",
 		bytes.NewBuffer(body),
 	)
 	if err != nil {
-		return err
+		log.Printf("[Server] Failed to send request to agent: %v", err)
+		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// 读取响应
+	var respBody bytes.Buffer
+	if _, err := respBody.ReadFrom(resp.Body); err == nil {
+		log.Printf("[Server] Agent response - Status: %d, Body: %s", resp.StatusCode, respBody.String())
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("agent returned non-OK status: %d", resp.StatusCode)
+	}
 
 	return nil
 }
@@ -296,5 +330,47 @@ func (m *GetExecutionMethod) Execute(ctx context.Context, params json.RawMessage
 
 	return map[string]interface{}{
 		"execution": execution,
+	}, nil
+}
+
+// ListExecutionsMethod 获取任务的执行历史
+type ListExecutionsMethod struct {
+	storage storage.Storage
+}
+
+func NewListExecutionsMethod(storage storage.Storage) *ListExecutionsMethod {
+	return &ListExecutionsMethod{storage: storage}
+}
+
+func (m *ListExecutionsMethod) Name() string {
+	return "plumber.execution.list"
+}
+
+func (m *ListExecutionsMethod) RequireAuth() bool {
+	return true
+}
+
+type ListExecutionsParams struct {
+	TaskID string `json:"task_id"`
+}
+
+func (m *ListExecutionsMethod) Execute(ctx context.Context, params json.RawMessage) (interface{}, error) {
+	var p ListExecutionsParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+
+	taskUUID, err := uuid.Parse(p.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid task_id: %w", err)
+	}
+
+	executions, err := m.storage.ListExecutionsByTaskID(ctx, taskUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list executions: %w", err)
+	}
+
+	return map[string]interface{}{
+		"executions": executions,
 	}, nil
 }

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/plumber/plumber/internal/agent/executor"
 	"github.com/plumber/plumber/pkg/jsonrpc"
 )
 
@@ -86,7 +88,7 @@ func (c *Client) callRPC(method string, params interface{}) (json.RawMessage, er
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequest("POST", c.serverURL+"/rpc", bytes.NewBuffer(body))
+	httpReq, err := http.NewRequest("POST", c.serverURL+"/api/rpc", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +131,101 @@ func (c *Client) StartHeartbeat(ctx context.Context, interval time.Duration) {
 			if err := c.Heartbeat(); err != nil {
 				fmt.Printf("Heartbeat failed: %v\n", err)
 			}
+		}
+	}
+}
+
+// PollTask 拉取待执行任务
+func (c *Client) PollTask() (bool, *TaskInfo, error) {
+	params := map[string]string{
+		"agent_id": c.agentID.String(),
+	}
+
+	result, err := c.callRPC("plumber.agent.pollTask", params)
+	if err != nil {
+		return false, nil, err
+	}
+
+	var response struct {
+		HasTask bool `json:"has_task"`
+		Task    *struct {
+			StepID  string `json:"step_id"`
+			Path    string `json:"path"`
+			Command string `json:"command"`
+		} `json:"task,omitempty"`
+	}
+
+	if err := json.Unmarshal(result, &response); err != nil {
+		return false, nil, err
+	}
+
+	if !response.HasTask || response.Task == nil {
+		return false, nil, nil
+	}
+
+	taskInfo := &TaskInfo{
+		StepID:  response.Task.StepID,
+		Path:    response.Task.Path,
+		Command: response.Task.Command,
+	}
+
+	return true, taskInfo, nil
+}
+
+// TaskInfo 任务信息
+type TaskInfo struct {
+	StepID  string
+	Path    string
+	Command string
+}
+
+// StartTaskPolling 启动任务轮询
+func (c *Client) StartTaskPolling(ctx context.Context, exec *executor.Executor, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			hasTask, taskInfo, err := c.PollTask()
+			if err != nil {
+				fmt.Printf("Failed to poll task: %v\n", err)
+				continue
+			}
+
+			if !hasTask {
+				continue
+			}
+
+			// 有任务，执行它
+			log.Printf("[Task] Received task - StepID: %s, Path: %s, Command: %s",
+				taskInfo.StepID, taskInfo.Path, taskInfo.Command)
+
+			go func(info *TaskInfo) {
+				startTime := time.Now()
+				log.Printf("[Task] Starting execution - StepID: %s, Time: %s",
+					info.StepID, startTime.Format("2006-01-02 15:04:05"))
+
+				result := exec.ExecuteWithTimeout(info.Path, info.Command, 10*time.Minute)
+
+				endTime := time.Now()
+				duration := endTime.Sub(startTime)
+
+				status := "success"
+				if result.ExitCode != 0 {
+					status = "failed"
+				}
+
+				log.Printf("[Task] Finished execution - StepID: %s, Status: %s, ExitCode: %d, Duration: %s",
+					info.StepID, status, result.ExitCode, duration)
+
+				stepID, _ := uuid.Parse(info.StepID)
+				if err := c.ReportStepResult(stepID, status, result.ExitCode, result.Output); err != nil {
+					log.Printf("[Task] Failed to report step result: %v", err)
+				}
+			}(taskInfo)
 		}
 	}
 }

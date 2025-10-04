@@ -58,6 +58,20 @@ export interface CreateTaskResponse {
   status: string
 }
 
+// 更新任务参数
+export interface UpdateTaskParams {
+  task_id: string
+  name: string
+  description: string
+  config: string
+}
+
+// 更新任务响应
+export interface UpdateTaskResponse {
+  status: string
+  message: string
+}
+
 // 运行任务参数
 export interface RunTaskParams {
   task_id: string
@@ -79,6 +93,16 @@ export interface GetExecutionResponse {
   execution: TaskExecution
 }
 
+// 获取任务执行历史参数
+export interface ListExecutionsParams {
+  task_id: string
+}
+
+// 获取任务执行历史响应
+export interface ListExecutionsResponse {
+  executions: TaskExecution[]
+}
+
 // 获取任务列表
 export function listTasks() {
   return callRPC<ListTasksResponse>('plumber.task.list')
@@ -89,6 +113,11 @@ export function createTask(params: CreateTaskParams) {
   return callRPC<CreateTaskResponse>('plumber.task.create', params)
 }
 
+// 更新任务
+export function updateTask(params: UpdateTaskParams) {
+  return callRPC<UpdateTaskResponse>('plumber.task.update', params)
+}
+
 // 运行任务
 export function runTask(params: RunTaskParams) {
   return callRPC<RunTaskResponse>('plumber.task.run', params)
@@ -97,4 +126,9 @@ export function runTask(params: RunTaskParams) {
 // 获取执行记录
 export function getExecution(params: GetExecutionParams) {
   return callRPC<GetExecutionResponse>('plumber.execution.get', params)
+}
+
+// 获取任务执行历史
+export function listExecutions(params: ListExecutionsParams) {
+  return callRPC<ListExecutionsResponse>('plumber.execution.list', params)
 }

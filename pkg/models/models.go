@@ -59,10 +59,11 @@ type StepExecution struct {
 	ID          uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	ExecutionID uuid.UUID      `gorm:"type:uuid;not null;index" json:"execution_id"`
 	StepIndex   int            `gorm:"not null" json:"step_index"`
-	AgentID     uuid.UUID      `gorm:"type:uuid;not null" json:"agent_id"`
+	AgentID     uuid.UUID      `gorm:"type:uuid;not null;index" json:"agent_id"`
 	Path        string         `gorm:"size:500" json:"path"`
 	Command     string         `gorm:"type:text;not null" json:"command"`
 	Status      string         `gorm:"size:20;not null;default:'pending'" json:"status"` // pending/running/success/failed
+	Assigned    bool           `gorm:"default:false;index" json:"assigned"` // 是否已分配给agent
 	ExitCode    *int           `json:"exit_code,omitempty"`
 	Output      string         `gorm:"type:text" json:"output,omitempty"`
 	StartTime   *time.Time     `json:"start_time,omitempty"`
