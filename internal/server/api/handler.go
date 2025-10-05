@@ -7,10 +7,16 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/plumber/plumber/internal/server/storage"
 	"github.com/plumber/plumber/pkg/auth"
 	"github.com/plumber/plumber/pkg/jsonrpc"
 )
+
+// parseAgentUUID 辅助函数：解析UUID字符串
+func parseAgentUUID(s string) (uuid.UUID, error) {
+	return uuid.Parse(s)
+}
 
 // Handler HTTP处理器
 type Handler struct {
@@ -145,3 +151,76 @@ func GetUsernameFromContext(ctx context.Context) (string, bool) {
 	username, ok := ctx.Value(usernameKey).(string)
 	return username, ok
 }
+
+// RestHandler RESTful API处理器
+type RestHandler struct {
+	storage    storage.Storage
+	agentToken string
+	serverAddr string
+}
+
+// NewRestHandler 创建新的REST处理器
+func NewRestHandler(storage storage.Storage, agentToken, serverAddr string) *RestHandler {
+	return &RestHandler{
+		storage:    storage,
+		agentToken: agentToken,
+		serverAddr: serverAddr,
+	}
+}
+
+// GetAgentConfig 获取Agent配置（RESTful API）
+func (h *RestHandler) GetAgentConfig(w http.ResponseWriter, r *http.Request) {
+	// 设置CORS头
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/json")
+
+	// 处理预检请求
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Only GET method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 从URL路径中提取agent_id
+	// 路径格式: /api/agent/config/{agent_id}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		http.Error(w, "Invalid URL format", http.StatusBadRequest)
+		return
+	}
+	agentID := parts[3]
+
+	// 验证agent_id格式
+	agentUUID, err := parseAgentUUID(agentID)
+	if err != nil {
+		http.Error(w, "Invalid agent_id format", http.StatusBadRequest)
+		return
+	}
+
+	// 验证Agent存在
+	agent, err := h.storage.GetAgent(r.Context(), agentUUID)
+	if err != nil {
+		http.Error(w, "Agent not found", http.StatusNotFound)
+		return
+	}
+
+	// 生成配置文件内容
+	config := map[string]any{
+		"id":          agent.ID.String(),
+		"token":       h.agentToken,
+		"server_addr": h.serverAddr,
+	}
+
+	// 返回JSON响应
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(config); err != nil {
+		log.Printf("Failed to encode config: %v", err)
+	}
+}
+

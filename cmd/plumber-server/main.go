@@ -59,6 +59,9 @@ func main() {
 	// 创建HTTP处理器
 	apiHandler := api.NewHandler(router, store, jwtManager, cfg.Auth.AgentToken)
 
+	// 创建 RESTful API 处理器
+	restHandler := api.NewRestHandler(store, cfg.Auth.AgentToken, exportEndpoint)
+
 	// 创建 WebSSH 处理器
 	encryptionKey := []byte{}
 	if cfg.Auth.EncryptionKey != "" {
@@ -70,6 +73,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/api/rpc", apiHandler)
 	mux.Handle("/api/webssh", websshHandler)
+	mux.HandleFunc("/api/agent/config/", restHandler.GetAgentConfig)
 
 	// 健康检查端点
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

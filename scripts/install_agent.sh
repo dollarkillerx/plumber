@@ -9,13 +9,12 @@ SYSTEMD_URL="https://raw.githubusercontent.com/dollarkillerx/plumber/refs/heads/
 INSTALL_DIR="/opt/plumber_agent"
 
 # rm -rf $INSTALL_DIR || true
+# 创建安装目录
+# mkdir -p $INSTALL_DIR
 
 rm -rf /etc/systemd/system/plumber-agent.service || true
 
 systemctl stop plumber-agent || true
-
-# 创建安装目录
-mkdir -p $INSTALL_DIR
 
 # 下载安装文件
 curl -L -o $INSTALL_DIR/plumber-agent $DOWNLOAD_URL

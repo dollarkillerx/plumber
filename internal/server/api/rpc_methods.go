@@ -716,7 +716,6 @@ type DeployAgentParams struct {
 	AgentID    string `json:"agent_id"`
 	ScriptURL  string `json:"script_url"`
 	InstallDir string `json:"install_dir"`
-	ServerAddr string `json:"server_addr"`
 }
 
 func (m *DeployAgentMethod) Execute(ctx context.Context, params json.RawMessage) (interface{}, error) {
@@ -752,12 +751,11 @@ func (m *DeployAgentMethod) Execute(ctx context.Context, params json.RawMessage)
 }
 
 func (m *DeployAgentMethod) deployViaSSH(agent *models.Agent, params DeployAgentParams) (string, error) {
-	// 使用系统 SSH 命令（简单实现）
-	// 生成 agent 配置
+	// 生成 agent 配置，使用服务器配置的地址
 	config := map[string]interface{}{
 		"id":          agent.ID.String(),
 		"token":       m.agentToken,
-		"server_addr": params.ServerAddr,
+		"server_addr": m.serverAddr,
 	}
 	configJSON, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -765,20 +763,30 @@ func (m *DeployAgentMethod) deployViaSSH(agent *models.Agent, params DeployAgent
 	}
 
 	// 构建部署命令
+	// 1. 删除安装目录
+	// 2. 创建安装目录
+	// 3. 写入配置文件
+	// 4. 下载并执行安装脚本
 	deployScript := fmt.Sprintf(`
 set -e
-# 1. 删除安装目录
+echo "Step 1: Removing old installation directory..."
 sudo rm -rf %s || true
-# 2. 创建配置目录
+
+echo "Step 2: Creating installation directory..."
 sudo mkdir -p %s
-# 3. 写入配置文件
+
+echo "Step 3: Writing agent configuration..."
 cat > /tmp/agent.json << 'EOF'
 %s
 EOF
 sudo mv /tmp/agent.json %s/agent.json
-# 4. 下载并执行安装脚本
+sudo chmod 644 %s/agent.json
+
+echo "Step 4: Downloading and executing installation script..."
 curl -sSL "%s" | sudo bash
-`, params.InstallDir, params.InstallDir, string(configJSON), params.InstallDir, params.ScriptURL)
+
+echo "Deployment completed successfully!"
+`, params.InstallDir, params.InstallDir, string(configJSON), params.InstallDir, params.InstallDir, params.ScriptURL)
 
 	// 根据认证类型构建 SSH 命令
 	var sshCmd string

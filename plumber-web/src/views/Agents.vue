@@ -191,16 +191,6 @@
             />
             <p class="mt-1 text-xs text-gray-500">Agent 安装目录，部署前会被删除</p>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">Server Address</label>
-            <input
-              v-model="deployConfig.serverAddr"
-              type="text"
-              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="http://your-server:52281"
-            />
-            <p class="mt-1 text-xs text-gray-500">Plumber Server 地址，写入 Agent 配置文件</p>
-          </div>
           <div class="flex justify-end space-x-3 pt-4">
             <button
               @click="showConfigModal = false"
@@ -362,7 +352,6 @@ const createForm = ref<CreateAgentParams>({
 const deployConfig = ref({
   scriptUrl: localStorage.getItem('plumber_deploy_script_url') || 'https://raw.githubusercontent.com/dollarkillerx/plumber/refs/heads/main/scripts/install_agent.sh',
   installDir: localStorage.getItem('plumber_deploy_install_dir') || '/opt/plumber_agent',
-  serverAddr: localStorage.getItem('plumber_deploy_server_addr') || 'http://localhost:52281',
 })
 
 onMounted(() => {
@@ -497,7 +486,6 @@ function copyToClipboard(text: string) {
 function saveDeployConfig() {
   localStorage.setItem('plumber_deploy_script_url', deployConfig.value.scriptUrl)
   localStorage.setItem('plumber_deploy_install_dir', deployConfig.value.installDir)
-  localStorage.setItem('plumber_deploy_server_addr', deployConfig.value.serverAddr)
   showConfigModal.value = false
   alert('Deploy configuration saved!')
 }
@@ -524,7 +512,6 @@ async function handleDeploy(agent: Agent) {
           agent_id: agent.id,
           script_url: deployConfig.value.scriptUrl,
           install_dir: deployConfig.value.installDir,
-          server_addr: deployConfig.value.serverAddr,
         },
         id: Date.now().toString(),
       }),
