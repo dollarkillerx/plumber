@@ -219,17 +219,13 @@ function removeStep(index: number) {
 
 function moveStepUp(index: number) {
   if (index > 0) {
-    const temp = steps.value[index]
-    steps.value[index] = steps.value[index - 1]
-    steps.value[index - 1] = temp
+    [steps.value[index], steps.value[index - 1]] = [steps.value[index - 1]!, steps.value[index]!]
   }
 }
 
 function moveStepDown(index: number) {
   if (index < steps.value.length - 1) {
-    const temp = steps.value[index]
-    steps.value[index] = steps.value[index + 1]
-    steps.value[index + 1] = temp
+    [steps.value[index], steps.value[index + 1]] = [steps.value[index + 1]!, steps.value[index]!]
   }
 }
 

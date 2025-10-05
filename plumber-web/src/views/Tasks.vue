@@ -526,7 +526,7 @@ function parseTOMLToSteps(config: string): Step[] {
       cmdMatch = block.match(/CMD\s*=\s*"([^"]+)"/)
     }
 
-    if (serverIdMatch && pathMatch && cmdMatch) {
+    if (serverIdMatch?.[1] && pathMatch?.[1] && cmdMatch?.[1]) {
       steps.push({
         serverId: serverIdMatch[1],
         path: pathMatch[1],
@@ -591,17 +591,13 @@ function removeEditStep(index: number) {
 
 function moveEditStepUp(index: number) {
   if (index > 0) {
-    const temp = editSteps.value[index]
-    editSteps.value[index] = editSteps.value[index - 1]
-    editSteps.value[index - 1] = temp
+    [editSteps.value[index], editSteps.value[index - 1]] = [editSteps.value[index - 1]!, editSteps.value[index]!]
   }
 }
 
 function moveEditStepDown(index: number) {
   if (index < editSteps.value.length - 1) {
-    const temp = editSteps.value[index]
-    editSteps.value[index] = editSteps.value[index + 1]
-    editSteps.value[index + 1] = temp
+    [editSteps.value[index], editSteps.value[index + 1]] = [editSteps.value[index + 1]!, editSteps.value[index]!]
   }
 }
 
