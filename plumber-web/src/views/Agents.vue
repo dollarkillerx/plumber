@@ -320,7 +320,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
-import { createAgent, getAgentConfig, updateAgent, deleteAgent } from '@/api/agent'
+import { createAgent, getAgentConfig, updateAgent, deleteAgent, deployAgent } from '@/api/agent'
 import type { CreateAgentParams, UpdateAgentParams, Agent } from '@/api/agent'
 
 const router = useRouter()
@@ -498,32 +498,13 @@ async function handleDeploy(agent: Agent) {
   deploying.value = agent.id
 
   try {
-    // 调用部署 API
-    const response = await fetch('/api/rpc', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'plumber.agent.deploy',
-        params: {
-          agent_id: agent.id,
-          script_url: deployConfig.value.scriptUrl,
-          install_dir: deployConfig.value.installDir,
-        },
-        id: Date.now().toString(),
-      }),
+    const result = await deployAgent({
+      agent_id: agent.id,
+      script_url: deployConfig.value.scriptUrl,
+      install_dir: deployConfig.value.installDir,
     })
 
-    const result = await response.json()
-
-    if (result.error) {
-      throw new Error(result.error.message || 'Deploy failed')
-    }
-
-    alert(`Deploy successful!\\n\\nOutput:\\n${result.result?.output || 'No output'}`)
+    alert(`Deploy successful!\\n\\nOutput:\\n${result.output || 'No output'}`)
     await fetchData()
   } catch (err: any) {
     alert('Deploy failed: ' + (err.message || 'Unknown error'))

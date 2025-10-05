@@ -82,3 +82,21 @@ export function updateAgent(params: UpdateAgentParams) {
 export function deleteAgent(agentId: string) {
   return callRPC('plumber.agent.delete', { agent_id: agentId })
 }
+
+// 部署 Agent 参数
+export interface DeployAgentParams {
+  agent_id: string
+  script_url: string
+  install_dir: string
+}
+
+// 部署 Agent 响应
+export interface DeployAgentResponse {
+  status: string
+  output: string
+}
+
+// 部署 Agent
+export function deployAgent(params: DeployAgentParams) {
+  return callRPC<DeployAgentResponse>('plumber.agent.deploy', params)
+}

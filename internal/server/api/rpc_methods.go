@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +12,7 @@ import (
 	"github.com/plumber/plumber/pkg/auth"
 	"github.com/plumber/plumber/pkg/jsonrpc"
 	"github.com/plumber/plumber/pkg/models"
+	"golang.org/x/crypto/ssh"
 )
 
 // AgentRegisterMethod Agent注册方法
@@ -719,6 +718,7 @@ type DeployAgentParams struct {
 }
 
 func (m *DeployAgentMethod) Execute(ctx context.Context, params json.RawMessage) (interface{}, error) {
+	log.Println("DeployAgentMethod Execute")
 	var p DeployAgentParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -752,7 +752,7 @@ func (m *DeployAgentMethod) Execute(ctx context.Context, params json.RawMessage)
 
 func (m *DeployAgentMethod) deployViaSSH(agent *models.Agent, params DeployAgentParams) (string, error) {
 	// 生成 agent 配置，使用服务器配置的地址
-	config := map[string]interface{}{
+	config := map[string]any{
 		"id":          agent.ID.String(),
 		"token":       m.agentToken,
 		"server_addr": m.serverAddr,
@@ -763,60 +763,115 @@ func (m *DeployAgentMethod) deployViaSSH(agent *models.Agent, params DeployAgent
 	}
 
 	// 构建部署命令
-	// 1. 删除安装目录
-	// 2. 创建安装目录
-	// 3. 写入配置文件
-	// 4. 下载并执行安装脚本
+	// 根据用户是否是 root 来决定是否使用 sudo
+	sudoCmd := "sudo"
+	if agent.SSHUser == "root" {
+		sudoCmd = ""
+	}
+
 	deployScript := fmt.Sprintf(`
 set -e
 echo "Step 1: Removing old installation directory..."
-sudo rm -rf %s || true
+%s rm -rf %s || true
 
 echo "Step 2: Creating installation directory..."
-sudo mkdir -p %s
+%s mkdir -p %s
 
 echo "Step 3: Writing agent configuration..."
 cat > /tmp/agent.json << 'EOF'
 %s
 EOF
-sudo mv /tmp/agent.json %s/agent.json
-sudo chmod 644 %s/agent.json
+%s mv /tmp/agent.json %s/agent.json
+%s chmod 644 %s/agent.json
 
 echo "Step 4: Downloading and executing installation script..."
-curl -sSL "%s" | sudo bash
+curl -sSL "%s" | %s bash
 
 echo "Deployment completed successfully!"
-`, params.InstallDir, params.InstallDir, string(configJSON), params.InstallDir, params.InstallDir, params.ScriptURL)
+`,
+		sudoCmd, params.InstallDir,
+		sudoCmd, params.InstallDir,
+		string(configJSON),
+		sudoCmd, params.InstallDir,
+		sudoCmd, params.InstallDir,
+		params.ScriptURL, sudoCmd)
 
-	// 根据认证类型构建 SSH 命令
-	var sshCmd string
-	if agent.SSHAuthType == "password" && agent.SSHPassword != "" {
-		// 使用 sshpass
-		sshCmd = fmt.Sprintf(`sshpass -p '%s' ssh -o StrictHostKeyChecking=no %s@%s -p %d '%s'`,
-			agent.SSHPassword, agent.SSHUser, agent.SSHHost, agent.SSHPort, deployScript)
-	} else if agent.SSHAuthType == "key" && agent.SSHPrivateKey != "" {
-		// 暂时保存私钥到临时文件
-		tmpKeyFile := fmt.Sprintf("/tmp/ssh_key_%s", agent.ID.String())
-		if err := os.WriteFile(tmpKeyFile, []byte(agent.SSHPrivateKey), 0600); err != nil {
-			return "", fmt.Errorf("failed to write SSH key: %w", err)
+	// 验证 SSH 连接信息
+	if agent.SSHUser == "" {
+		return "", fmt.Errorf("SSH user is required")
+	}
+	if agent.SSHHost == "" {
+		return "", fmt.Errorf("SSH host is required")
+	}
+
+	// 创建 SSH 配置
+	sshConfig := &ssh.ClientConfig{
+		User:            agent.SSHUser,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	var authMethods []ssh.AuthMethod
+
+	// 根据认证类型设置认证方法
+	switch agent.SSHAuthType {
+	case "password":
+		if agent.SSHPassword == "" {
+			return "", fmt.Errorf("password is required for password authentication")
 		}
-		defer os.Remove(tmpKeyFile)
+		log.Printf("[Deploy] Using password authentication for %s@%s", agent.SSHUser, agent.SSHHost)
+		authMethods = append(authMethods, ssh.Password(agent.SSHPassword))
 
-		sshCmd = fmt.Sprintf(`ssh -i %s -o StrictHostKeyChecking=no %s@%s -p %d '%s'`,
-			tmpKeyFile, agent.SSHUser, agent.SSHHost, agent.SSHPort, deployScript)
-	} else {
-		// 无密码认证
-		sshCmd = fmt.Sprintf(`ssh -o StrictHostKeyChecking=no %s@%s -p %d '%s'`,
-			agent.SSHUser, agent.SSHHost, agent.SSHPort, deployScript)
+	case "key":
+		if agent.SSHPrivateKey == "" {
+			return "", fmt.Errorf("private key is required for key authentication")
+		}
+		signer, err := ssh.ParsePrivateKey([]byte(agent.SSHPrivateKey))
+		if err != nil {
+			return "", fmt.Errorf("failed to parse private key: %w", err)
+		}
+		log.Printf("[Deploy] Using key authentication for %s@%s", agent.SSHUser, agent.SSHHost)
+		authMethods = append(authMethods, ssh.PublicKeys(signer))
+
+	default:
+		return "", fmt.Errorf("authentication type '%s' is not supported. Use 'password' or 'key'", agent.SSHAuthType)
 	}
 
-	// 执行 SSH 命令
-	cmd := exec.Command("bash", "-c", sshCmd)
-	output, err := cmd.CombinedOutput()
+	if len(authMethods) == 0 {
+		return "", fmt.Errorf("no authentication method configured")
+	}
+
+	sshConfig.Auth = authMethods
+
+	// 连接到 SSH 服务器
+	addr := fmt.Sprintf("%s:%d", agent.SSHHost, agent.SSHPort)
+	log.Printf("[Deploy] Connecting to SSH server: %s@%s", agent.SSHUser, addr)
+
+	client, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
-		return string(output), fmt.Errorf("SSH command failed: %w\nOutput: %s", err, string(output))
+		return "", fmt.Errorf("SSH connection failed: %w", err)
+	}
+	defer client.Close()
+
+	log.Printf("[Deploy] SSH connection established successfully")
+
+	// 创建会话
+	session, err := client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	defer session.Close()
+
+	log.Printf("[Deploy] Executing deployment script...")
+
+	// 执行部署脚本
+	output, err := session.CombinedOutput(deployScript)
+	if err != nil {
+		log.Printf("[Deploy] Script execution failed: %v\nOutput: %s", err, string(output))
+		return string(output), fmt.Errorf("deployment script failed: %w\nOutput: %s", err, string(output))
 	}
 
+	log.Printf("[Deploy] Deployment completed successfully")
 	return string(output), nil
 }
 
