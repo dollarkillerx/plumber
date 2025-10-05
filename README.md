@@ -8,6 +8,37 @@ Plumber 通过 Web 界面和命令行工具，简化批量运维、部署、批�
 
 ![](./image.png)
 
+
+## use cli
+
+mac:
+```
+curl -L https://github.com/dollarkillerx/plumber/releases/download/v0.0.2/plumber-cli-darwin-arm64
+ > /usr/local/bin/plumber-cli
+
+chmod +x /usr/local/bin/plumber-cli
+
+```
+
+linux:
+```
+curl -L https://github.com/dollarkillerx/plumber/releases/download/v0.0.2/plumber-cli-linux-amd64
+ > /usr/local/bin/plumber-cli
+chmod +x /usr/local/bin/plumber-cli
+```
+
+```
+% ./plumber-cli 
+Plumber CLI - Task orchestration and distribution tool
+
+Usage:
+  plumber-cli set-config --url <server_url> --user <username> --password <password>
+  plumber-cli task list
+  plumber-cli task run <task_id>
+  plumber-cli task info <task_id>
+  plumber-cli agent list
+```
+
 ### 核心组件
 
 - **Plumber Server** - 核心控制中心，负责任务管理、Agent 管理、任务分发和结果收集

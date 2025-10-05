@@ -278,17 +278,55 @@ func (m *RunTaskMethod) Execute(ctx context.Context, params json.RawMessage) (in
 		return nil, fmt.Errorf("invalid task_id: %w", err)
 	}
 
-	// 异步执行任务
+	// 同步获取 execution ID，然后异步执行任务
+	executionIDChan := make(chan uuid.UUID, 1)
+	errChan := make(chan error, 1)
+
+	// 启动任务执行，并通过 channel 返回 execution ID
 	go func() {
+		// 先获取执行前的 execution 列表
+		beforeExecutions, _ := m.storage.ListExecutionsByTaskID(context.Background(), taskUUID)
+		beforeCount := len(beforeExecutions)
+
+		// 启动任务执行
 		if err := m.executor.ExecuteTask(context.Background(), taskUUID); err != nil {
 			log.Printf("Task execution error: %v", err)
 		}
+
+		// 获取新创建的 execution
+		for i := 0; i < 10; i++ {
+			time.Sleep(100 * time.Millisecond)
+			afterExecutions, err := m.storage.ListExecutionsByTaskID(context.Background(), taskUUID)
+			if err == nil && len(afterExecutions) > beforeCount {
+				executionIDChan <- afterExecutions[0].ID
+				return
+			}
+		}
+		errChan <- fmt.Errorf("failed to get execution ID")
 	}()
 
-	return map[string]interface{}{
-		"status":  "started",
-		"message": "Task execution started",
-	}, nil
+	// 等待 execution ID 或超时
+	select {
+	case executionID := <-executionIDChan:
+		return map[string]interface{}{
+			"status":       "started",
+			"message":      "Task execution started",
+			"execution_id": executionID.String(),
+		}, nil
+	case err := <-errChan:
+		log.Printf("Failed to get execution ID: %v", err)
+		return map[string]interface{}{
+			"status":  "started",
+			"message": "Task execution started (execution ID unavailable)",
+		}, nil
+	case <-time.After(2 * time.Second):
+		// 超时，返回不带 execution_id 的响应
+		log.Printf("Timeout waiting for execution ID")
+		return map[string]interface{}{
+			"status":  "started",
+			"message": "Task execution started (execution ID unavailable)",
+		}, nil
+	}
 }
 
 // GetExecutionMethod 获取执行记录
