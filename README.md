@@ -13,17 +13,13 @@ Plumber 通过 Web 界面和命令行工具，简化批量运维、部署、批�
 
 mac:
 ```
-curl -L https://github.com/dollarkillerx/plumber/releases/download/v0.0.2/plumber-cli-darwin-arm64
- > /usr/local/bin/plumber-cli
-
+curl -L https://github.com/dollarkillerx/plumber/releases/download/v0.0.2/plumber-cli-darwin-arm64 > /usr/local/bin/plumber-cli
 chmod +x /usr/local/bin/plumber-cli
-
 ```
 
 linux:
 ```
-curl -L https://github.com/dollarkillerx/plumber/releases/download/v0.0.2/plumber-cli-linux-amd64
- > /usr/local/bin/plumber-cli
+curl -L https://github.com/dollarkillerx/plumber/releases/download/v0.0.2/plumber-cli-linux-amd64 > /usr/local/bin/plumber-cli
 chmod +x /usr/local/bin/plumber-cli
 ```
 
