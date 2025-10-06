@@ -13,6 +13,8 @@ LimitCORE=infinity
 LimitNOFILE=999999
 WorkingDirectory=/opt/plumber_agent
 
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 # 启动 Agent 可执行文件
 ExecStart=/opt/plumber_agent/plumber-agent
 
