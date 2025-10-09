@@ -1,6 +1,6 @@
 services:
   server:
-    image: plumber-server:latest
+    image: dollarkiller/plumber-server:latest
     container_name: plumber-server
     restart: always
     ports:
